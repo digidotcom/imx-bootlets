@@ -37,6 +37,7 @@
 #include "registers/regsclkctrl.h"
 #include "registers/regslradc.h"
 #include "registers/regsrtc.h"
+#include "regsocotp.h"
 #include <stdarg.h>
 #include "debug.h"
 
@@ -55,7 +56,7 @@ bool IsVbusValid( void );
 bool IsVdd5vGtVddio( void );
 bool Is5vPresent( void );
 bool IsBattLevelValidForBoot( void );
-void PowerPrep_ClearAutoRestart( void );
+void PowerPrep_SetAutoRestart( void );
 int PowerPrep_ConfigurePowerSource( void );
 void PowerPrep_PowerDown( void );
 void PowerPrep_Setup5vDetect( void );
@@ -198,6 +199,11 @@ void PowerPrep_PrintBatteryVoltage(unsigned int value);
 
 #define ALWAYS_BOOT_FROM_5V_IF_DETECTED
 
+/* Define this to disable power off on fast-falling edge of PSWITCH, to
+ * make the board more tolerant to enviromental impacts.
+ */
+#define DISABLE_POWEROFF_ON_FASTFALL_PSWITCH
+
 ////////////////////////////////////////////////////////////////////////////////
 // Globals
 ////////////////////////////////////////////////////////////////////////////////
@@ -247,6 +253,29 @@ bool IsBattLevelValidForBoot( void )
     return (bBattLevelValid);
 }
 
+/*
+ * Obtain the hardware version from OTP bits at CUST1[7..4]
+ */
+unsigned char get_hv(void)
+{
+        unsigned long retries = 100000;
+        unsigned char hv;
+
+        /* Open OTP banks */
+        HW_OCOTP_CTRL_SET(BM_OCOTP_CTRL_RD_BANK_OPEN);
+        while((BM_OCOTP_CTRL_BUSY & HW_OCOTP_CTRL_RD()) &&
+              retries--);
+
+        /* Read variant from CUST1[7..4] */
+        hv = (HW_OCOTP_CUSTn_RD(1) >> 4) & 0xf;
+
+        /* Close OTP banks */
+        HW_OCOTP_CTRL_CLR(BM_OCOTP_CTRL_RD_BANK_OPEN);
+
+        /* return sdram size of variant */
+        return hv;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //! \brief  Prepares the power block for the application.
@@ -257,6 +286,7 @@ bool IsBattLevelValidForBoot( void )
 int _start( void )
 {
 	int iRtn = SUCCESS;
+	unsigned char hv;
 
 	// CCARDIMX28 uses DUART on C7/D8 which is different from default value used by
 	// MX28_EVK. If we blow HW_OCOTP_ROM0.USE_ALT_DEBUG_UART_PINS=b'10, then
@@ -268,11 +298,18 @@ int _start( void )
 	HW_PINCTRL_MUXSEL7_CLR(0x000f000f);
 	HW_PINCTRL_MUXSEL7_SET(0x000a000f); // BANK3_PIN25=10,BANK3_PIN24=10
 
-	/* Pull LCD_RS gpio down to enable FET that blocks 3V3 and 1V8
-	* power regulators on module
-	*/
+	/* On modules newer than V1, a FET is blocking the 3V3 supply.
+	 * To have this voltage enabled to the module LCD_RS
+	 * must be driven low on modules V2..V5 and driven high on modules V6.
+	 * On V1 modules this line is not used so the code is harmless.
+	 * Modules with blank OTP bits are by default considered as V6.
+	 */
+	hv = get_hv();
 	HW_PINCTRL_MUXSEL3_SET(0x00300000);     /* GPIO1_26 as GPIO */
-	HW_PINCTRL_DOUT1_CLR(0x04000000);       /* GPIO1_26 value 0 */
+	if (hv > 0 && hv < 6)
+		HW_PINCTRL_DOUT1_CLR(0x04000000);       /* GPIO1_26 value 0 */
+	else
+		HW_PINCTRL_DOUT1_SET(0x04000000);       /* GPIO1_26 value 1 */
 	HW_PINCTRL_DOE1_SET(0x04000000);        /* GPIO1_26 direction output */
 
 #ifndef mx28
@@ -314,7 +351,7 @@ int _start( void )
 #endif
 
 	PowerPrep_CPUClock2XTAL();
-	PowerPrep_ClearAutoRestart();
+	PowerPrep_SetAutoRestart();
 
 	hw_power_SetPowerClkGate( false );
 
@@ -372,23 +409,26 @@ int _start( void )
 
 	}
 
+#if defined(DISABLE_POWEROFF_ON_FASTFALL_PSWITCH)
+	/* Disable hardware power off on fast-falling edge of PSWITCH, to
+	 * make the board more tolerant to enviromental impacts.
+	 */
+	HW_POWER_RESET_SET(BF_POWER_RESET_UNLOCK(BV_POWER_RESET_UNLOCK__KEY) |
+		BM_POWER_RESET_FASTFALLPSWITCH_OFF);
+#endif
 
 	return iRtn;
 }
 
-/* clear RTC ALARM wakeup or AUTORESTART bits here. */
-void PowerPrep_ClearAutoRestart( void )
+/* set AUTORESTART bit here. */
+void PowerPrep_SetAutoRestart( void )
 {
 	HW_RTC_CTRL_CLR( BM_RTC_CTRL_SFTRST );
 	while( HW_RTC_CTRL.B.SFTRST == 1 );
 	HW_RTC_CTRL_CLR( BM_RTC_CTRL_CLKGATE );
 	while( HW_RTC_CTRL.B.CLKGATE == 1 );
-        /* Due to the hardware design bug of mx28 EVK-A
-        * we need to set the AUTO_RESTART bit.
-	*/
-#if 0
-	if(HW_RTC_PERSISTENT0.B.AUTO_RESTART==0)
-	{
+
+	if(HW_RTC_PERSISTENT0.B.AUTO_RESTART==0) {
 		while(BF_RD( RTC_STAT, NEW_REGS));
 		HW_RTC_PERSISTENT0.B.AUTO_RESTART = 1;
 		BF_SET(RTC_CTRL, FORCE_UPDATE);
@@ -396,7 +436,6 @@ void PowerPrep_ClearAutoRestart( void )
 		while(BF_RD( RTC_STAT, NEW_REGS));
 		while(BF_RD( RTC_STAT, STALE_REGS));
 	}
-#endif
 }
 ////////////////////////////////////////////////////////////////////////////////
 //! \brief
@@ -569,9 +608,9 @@ int PowerPrep_ConfigurePowerSource( void )
 			PowerPrep_CPUClock2PLL();
 		}
 #endif /* #ifdef (else) ALWAYS_BOOT_FROM_5V_IF_DETECTED */
-		/* raise battery brownout level to programmed value. */
-		PowerPrep_InitBattBo();
 	}
+	/* raise battery brownout level to programmed value. */
+	PowerPrep_InitBattBo();
 
 #endif /* #ifdef (else) NO_DCDC_BATT_SOURCE */
 
