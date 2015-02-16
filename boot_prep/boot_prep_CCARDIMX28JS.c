@@ -207,9 +207,16 @@ unsigned int get_sdram_size(void)
 }
 
 /*
- *  Init steps for memories
- *  	- Micron MT47H64M16-25E
- *  	- Micron MT47H128M16-25E
+ *  Init steps for memories:
+ *  	1 Gbit (128MiB)
+ *  	  - Micron MT47H64M16NF-25E
+ *  	  - ISSI IS43DR16640B-25DBLI
+ *  	  - Nanya NT5TU64M16HG-ACI
+ *	  - Winbond W971GG6KB-25I
+ *	2 Gbit (256MiB)
+ *	  - Micron MT47H128M16RT-25E
+ *	  - ISSI IS43DR16128B
+ *	  - Winbond W972GG6JB-25I
  *  running at variable EMI clock speed (205.71 or 130.91 MHz) depending
  *  on CPU freq selection
  *
@@ -263,12 +270,39 @@ void InitEMI_MT47HxxxM16_25E(void)
 	 * controller for the appropriate SDRAM chip.
 	 */
 	if (get_sdram_size() == 0x8000000) {
-		/* 128 SDRAM (MT47H64M16-25E) */
+		/* 128 SDRAM */
 		DRAM_REG[29] = 0x0102020a;  // Enable CS0; 10 bit col addr, 13 addr pins, auto precharge=A10
-	}
-	else {
-		/* 256 SDRAM (MT47H128M16-25E, assume default) */
+		if (CPUFREQ == 454) {
+			/* EMI freq = 205.71 MHz, cycle=4.861ns */
+			DRAM_REG[38] = 0x06005303;  // tDAL=tWR+tRP=15ns+12.5ns=27.5ns/4.86ns=6, CPD=400ns/4.86ns=83 (0x53), TCKE=3
+			DRAM_REG[41] = 0x0002030c;  // TPDEX=tXP=2, tRCD=12.5ns/4.86ns=3, tRC=55/4.86ns=12
+			DRAM_REG[43] = 0x031b0322;  // tRP=12.5ns/4.86ns=3, tRFC=127.5ns/4.86ns=27=0x1b, tREFIit=floor(3900ns/4.86ns)=802=0x322 (32ms refresh)
+			DRAM_REG[45] = 0x00c8001d;  // TSXR=tXSRDmin=200, TXSNR=tXSNR=tRFC+10ns=137.5ns/4.86ns=29=0x1d
+
+		} else {
+			/* EMI freq = 130.91 MHz, cycle=7.639ns */
+			DRAM_REG[38] = 0x04003503;  // tDAL=tWR+tRP=15ns+12.5ns=27.5ns/7.639ns=4, CPD=400ns/7.639ns=53 (0x35), TCKE=3
+			DRAM_REG[41] = 0x00020208;  // TPDEX=tXP=2, tRCD=12.5ns/7.639ns=2, tRC=55/7.639ns=8
+			DRAM_REG[43] = 0x020e01fe;  // tRP=12.5ns/7.639ns=2, tRFC=127.5ns/7.639ns=0x11, tREFIit=floor(3900ns/7.639ns)=510=0x1fe (32ms refresh)
+			DRAM_REG[45] = 0x00c80012;  // TSXR=tXSRDmin=200, TXSNR=tXSNR=tRFC+10ns=137.5ns/7.639ns=18=0x12
+		}
+	} else {
+		/* 256 SDRAM (default) */
 		DRAM_REG[29] = 0x0102010a;  // Enable CS0; 10 bit col addr, 14 addr pins, auto precharge=A10
+		if (CPUFREQ == 454) {
+			/* EMI freq = 205.71 MHz, cycle=4.861ns */
+			DRAM_REG[38] = 0x07005303;  // tDAL=tWR+tRP=15ns+15ns=30ns/4.86ns=7, CPD=400ns/4.86ns=83 (0x53), TCKE=3
+			DRAM_REG[41] = 0x0002040c;  // TPDEX=tXP=2, tRCD=15ns/4.86ns=4, tRC=57.5/4.86ns=12
+			DRAM_REG[43] = 0x04290322;  // tRP=15ns/4.86ns=4, tRFC=195ns/4.86ns=41=0x29, tREFIit=floor(3900ns/4.86ns)=802=0x322 (32ms refresh)
+			DRAM_REG[45] = 0x00c8002b;  // TSXR=tXSRDmin=200, TXSNR=tXSNR=tRFC+10ns=205ns/4.86ns=43=0x2b
+
+		} else {
+			/* EMI freq = 130.91 MHz, cycle=7.639ns */
+			DRAM_REG[38] = 0x04003503;  // tDAL=tWR+tRP=15ns+15ns=30ns/7.639ns=4, CPD=400ns/7.639ns=53 (0x35), TCKE=3
+			DRAM_REG[41] = 0x00020208;  // TPDEX=tXP=2, tRCD=15ns/7.639ns=2, tRC=57.5/7.639ns=8
+			DRAM_REG[43] = 0x021a01fe;  // tRP=15ns/7.639ns=2, tRFC=195ns/7.639ns=26=0x1a, tREFIit=floor(3900ns/7.639ns)=510=0x1fe (32ms refresh)
+			DRAM_REG[45] = 0x00c8001b;  // TSXR=tXSRDmin=200, TXSNR=tXSNR=tRFC+10ns=205ns/7.639ns=27=0x1b
+		}
 	}
 
 	DRAM_REG[31] = 0x00010101;  // 8 bank mode
@@ -281,26 +315,18 @@ void InitEMI_MT47HxxxM16_25E(void)
 
 	if (CPUFREQ == 454) {
 		/* EMI freq = 205.71 MHz, cycle=4.861ns */
-		DRAM_REG[38] = 0x06005303;  // tDAL=tWR+tRP=15ns+12.5ns=27.5ns/4.86ns=6, CPD=400ns/4.86ns=83 (0x53), TCKE=3
-		DRAM_REG[39] = 0x0a0000c8;  // tFAW=45ns/4.86ns=10, DLL reset recovery (lock) time = 200 cycles
+		DRAM_REG[39] = 0x0b0000c8;  // tFAW=50ns/4.86ns=11, DLL reset recovery (lock) time = 200 cycles
 		DRAM_REG[40] = 0x0200a0c1;  // TMRD=2, TINIT=200us/4.86ns=41153=0xa0c1 - see init timing diagram (note 3)
-		DRAM_REG[41] = 0x0002030c;  // TPDEX=tXP=2, tRCD=12.5ns/4.86ns=3, tRC=55/4.86ns=12
-		DRAM_REG[42] = 0x00384309;  // TRAS_max=floor(70000ns/4.86ns)=14403=0x3843, TRAS_min=40ns/4.86ns=9
-		DRAM_REG[43] = 0x03160322;  // tRP=12.5ns/4.86ns=3, tRFC(512Mb)=105ns/4.86ns=22=0x16, tREFIit=floor(3900ns/4.86ns)=802=0x322 (32ms refresh)
+		DRAM_REG[42] = 0x0038430a;  // TRAS_max=floor(70000ns/4.86ns)=14403=0x3843, TRAS_min=45ns/4.86ns=10
 		DRAM_REG[44] = 0x02040203;  // tWTR=7.5ns/4.86ns=2, tWR=15ns/4.86ns=4 tRTP=7.5ns/4.86ns=2 tRRD(x16)=10ns/4.86ns=3
-		DRAM_REG[45] = 0x00c80018;  // TSXR=tXSRDmin=200, TXSNR=tXSNR=tRFC(512Mb)+10ns=115ns/4.86ns=24
 	}
 	else {
 		/* EMI freq = 130.91 MHz, cycle=7.639ns */
-		DRAM_REG[38] = 0x04003503;  // tDAL=tWR+tRP=15ns+12.5ns=27.5ns/7.639ns=6, CPD=400ns/7.639ns=53 (0x35), TCKE=3
-		DRAM_REG[39] = 0x060000c8;  // tFAW=45ns/7.639ns=6, DLL reset recovery (lock) time = 200 cycles
+		DRAM_REG[39] = 0x070000c8;  // tFAW=50ns/7.639ns=7, DLL reset recovery (lock) time = 200 cycles
 		DRAM_REG[40] = 0x02006646;  // TMRD=2, TINIT=200us/7.639ns=26182=0x6646 - see init timing diagram (note 3)
-		DRAM_REG[41] = 0x00020208;  // TPDEX=tXP=2, tRCD=12.5ns/7.639ns=2, tRC=55/7.639ns=8
-		DRAM_REG[42] = 0x0023cb06;  // TRAS_max=floor(70000ns/7.639ns)=9163=0x23cb, TRAS_min=40ns/7.639ns=6
-		DRAM_REG[43] = 0x020e01fe;  // tRP=12.5ns/7.639ns=2, tRFC(512Mb)=105ns/7.639ns=0xe, tREFIit=floor(3900ns/7.639ns)=510=0x1fe (32ms refresh)
+		DRAM_REG[42] = 0x0023cb06;  // TRAS_max=floor(70000ns/7.639ns)=9163=0x23cb, TRAS_min=45ns/7.639ns=6
 		DRAM_REG[44] = 0x02020202;  // tWTR=7.5ns/7.639ns=1*, tWR=15ns/7.639ns=2 tRTP=7.5ns/7.639ns=1* tRRD(x16)=10ns/7.639ns=2
 					    // *NOTE: note 37 on DDR manual says force any value to a minimum of 2 clocks.
-		DRAM_REG[45] = 0x00c80010;  // TSXR=tXSRDmin=200, TXSNR=tXSNR=tRFC(512Mb)+10ns=115ns/7.639ns=16=0x10
 	}
 
 	DRAM_REG[48] = 0x00012100;      // EVK   value
@@ -360,17 +386,31 @@ void InitEMI_MT47HxxxM16_25E(void)
 	DRAM_REG[176] = 0x00000000;     // EVK   value
 
 	if (CPUFREQ == 454)
-		DRAM_REG[177] = 0x02030101;     // TCCD=2, TRPA=tRPA(<1Gb)=12.5ns/4.86ns=3, CKSRX/CKSRE=1 (see pg 115, note 1)
+		/* TCCD=2,
+		 * TRPA=
+		 * 	Nanya: tRPA = tRP + 1tCK = 12.5 + 1 = 13.5/4.86 = 3
+		 * 	Winbond: tRPA = tnRP + 1nCK = (tRP / tCK) + 1 = (12.5 / 4.86) + 1 = 4
+		 * 	Micron: tRPA = 15 / 4.86 = 4
+		 * CKSRX/CKSRE=1 (see pg 115, note 1)
+		 */
+		DRAM_REG[177] = 0x02040101;
 	else
-		DRAM_REG[177] = 0x02020101;     // TCCD=2, TRPA=tRPA(<1Gb)=12.5ns/7.639ns=2, CKSRX/CKSRE=1 (see pg 115, note 1)
+		/* TCCD=2,
+		 * TRPA=
+		 * 	Nanya: tRPA = tRP + 1tCK = 12.5 + 1 = 13.5/7.639 = 2
+		 * 	Winbond: tRPA = tnRP + 1nCK = (tRP / tCK) + 1 = (12.5 / 7.639) + 1 = 3
+		 * 	Micron: tRPA = 15 / 7.639 = 2
+		 * CKSRX/CKSRE=1 (see pg 115, note 1)
+		 */
+		DRAM_REG[177] = 0x02030101;
 
 	DRAM_REG[178] = 0x21002103;     // EVK   value
 	DRAM_REG[179] = 0x00061200;     // EVK   value (may be read-only?)
 	DRAM_REG[180] = 0x06120612;     // EVK   value (may be read-only?)
 	if (CPUFREQ == 454)
-		DRAM_REG[181] = 0x00000442;     // MR0 settings for CS0: WR=3, CASLat=4, Sequential, BurstLength=4
+		DRAM_REG[181] = 0x00000642;     // MR0 settings for CS0: WR=tWR/tCK=4, CASLat=4, Sequential, BurstLength=4
 	else
-		DRAM_REG[181] = 0x00000242;     // MR0 settings for CS0: WR=2, CASLat=4, Sequential, BurstLength=4
+		DRAM_REG[181] = 0x00000242;     // MR0 settings for CS0: WR=tWR/tCK=2, CASLat=4, Sequential, BurstLength=4
 	DRAM_REG[183] = 0x00000004;     // MR1 settings for CS0: 75ohm ODT nominal, Full drive strength
 	DRAM_REG[185] = 0x00000080;     // MR2 settings for CS0: 2x self-refresh timing (Tcase > 85C) (to give us more temp margin)
 	DRAM_REG[187] = 0x00000000;     // MR3 settings for CS0:
